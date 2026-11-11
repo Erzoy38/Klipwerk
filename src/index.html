@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' app: blob: data:; script-src 'self' app: blob: 'wasm-unsafe-eval' 'unsafe-eval'; style-src 'self' app: 'unsafe-inline'; connect-src 'self' app: blob: data: https:; img-src 'self' app: blob: data:; media-src 'self' app: blob:; worker-src 'self' app: blob:">
+  <title>Klipwerk</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand"><span class="logo">K</span><span>Klipwerk</span></div>
+    <input id="projName" class="proj-name" spellcheck="false" title="Projektname">
+    <div class="tb-group">
+      <button id="btnNew" class="btn ghost" title="Neues Projekt">Neu</button>
+      <button id="btnOpen" class="btn ghost" title="Projekt öffnen (Strg+O)">Öffnen</button>
+      <button id="btnSave" class="btn ghost" title="Projekt speichern (Strg+S)">Speichern</button>
+    </div>
+    <div class="tb-group">
+      <button id="btnUndo" class="btn icon" title="Rückgängig (Strg+Z)">↶</button>
+      <button id="btnRedo" class="btn icon" title="Wiederholen (Strg+Y)">↷</button>
+    </div>
+    <div class="spacer"></div>
+    <label class="tb-label">Format
+      <select id="aspect">
+        <option value="1920x1080">16:9 Querformat</option>
+        <option value="1080x1920">9:16 Hochformat</option>
+        <option value="1080x1080">1:1 Quadrat</option>
+        <option value="1080x1350">4:5 Porträt</option>
+        <option value="1440x1080">4:3 Klassisch</option>
+      </select>
+    </label>
+    <button id="btnExport" class="btn primary">Exportieren</button>
+  </header>
+
+  <main id="workspace">
+    <aside id="library">
+      <nav id="tabs">
+        <button data-tab="media" class="active"><i>▣</i>Medien</button>
+        <button data-tab="text"><i>T</i>Text</button>
+        <button data-tab="filter"><i>◑</i>Filter</button>
+        <button data-tab="fx"><i>✦</i>Effekte</button>
+        <button data-tab="anim"><i>➠</i>Animation</button>
+        <button data-tab="ai"><i>✧</i>KI</button>
+      </nav>
+      <div id="panels">
+        <section class="panel active" data-panel="media">
+          <button id="btnImport" class="btn primary wide">+ Medien importieren</button>
+          <p class="hint">Videos, Bilder und Audio hierher ziehen. Doppelklick fügt an der Abspielposition ein.</p>
+          <div id="mediaGrid" class="media-grid"></div>
+        </section>
+        <section class="panel" data-panel="text"><h3>Textstile</h3><div id="textGrid" class="tile-grid"></div></section>
+        <section class="panel" data-panel="filter"><h3>Farbfilter</h3><p class="hint need-visual">Wähle einen Video-, Bild- oder Textclip aus.</p><div id="filterGrid" class="tile-grid"></div></section>
+        <section class="panel" data-panel="fx"><h3>FX-Effekte</h3><p class="hint need-visual">Wähle einen Clip aus. Klick schaltet den Effekt an oder aus; die Stärke stellst du rechts ein.</p><div id="fxGrid" class="tile-grid"></div></section>
+        <section class="panel" data-panel="anim">
+          <h3>Einblend-Animation</h3><div id="animInGrid" class="chip-grid"></div>
+          <h3>Ausblend-Animation</h3><div id="animOutGrid" class="chip-grid"></div>
+          <p class="hint">Als Übergang: lege zwei Clips auf überlappende Spuren oder direkt hintereinander.</p>
+        </section>
+        <section class="panel" data-panel="ai" id="aiPanel"></section>
+      </div>
+    </aside>
+
+    <section id="stage">
+      <div id="viewport">
+        <div id="canvasWrap"><canvas id="preview"></canvas><canvas id="overlay"></canvas></div>
+        <div id="emptyHint">Importiere Medien und ziehe sie in die Timeline</div>
+      </div>
+      <div id="transport">
+        <span id="timeNow" class="time">00:00:00</span>
+        <div class="tp-buttons">
+          <button id="btnStart" class="btn icon" title="Zum Anfang (Pos1)">⏮</button>
+          <button id="btnBack" class="btn icon" title="Ein Bild zurück (←)">◂</button>
+          <button id="btnPlay" class="btn play" title="Wiedergabe (Leertaste)">▶</button>
+          <button id="btnFwd" class="btn icon" title="Ein Bild vor (→)">▸</button>
+          <button id="btnEnd" class="btn icon" title="Zum Ende (Ende)">⏭</button>
+        </div>
+        <span id="timeTotal" class="time dim">00:00:00</span>
+      </div>
+    </section>
+
+    <aside id="inspector"><div id="inspBody"></div></aside>
+  </main>
+
+  <section id="timeline">
+    <div class="tl-toolbar">
+      <button id="btnSplit" class="btn ghost" title="Am Abspielkopf teilen (S)">✂ Teilen</button>
+      <button id="btnDelete" class="btn ghost" title="Löschen (Entf)">🗑 Löschen</button>
+      <button id="btnDup" class="btn ghost" title="Duplizieren (Strg+D)">⧉ Duplizieren</button>
+      <span class="sep"></span>
+      <button id="btnAddTrack" class="btn ghost" title="Spur hinzufügen">+ Spur</button>
+      <label class="chk"><input type="checkbox" id="snap" checked> Einrasten</label>
+      <div class="spacer"></div>
+      <button id="btnFit" class="btn ghost" title="Alles anzeigen">Einpassen</button>
+      <span class="dim">Zoom</span><input type="range" id="zoom" min="0" max="100" value="50">
+    </div>
+    <div id="tlScroll"><div id="tlInner">
+      <div id="tlRulerRow"><div class="tl-corner"></div><canvas id="ruler"></canvas></div>
+      <div id="tlRows"></div>
+      <div id="playhead"><div class="ph-head"></div></div>
+    </div></div>
+  </section>
+
+  <div id="modal" class="modal hidden"><div class="modal-box" id="modalBox"></div></div>
+  <div id="dropVeil" class="hidden">Dateien hier ablegen</div>
+  <div id="toasts"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

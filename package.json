@@ -1,0 +1,57 @@
+{
+  "name": "klipwerk",
+  "productName": "Klipwerk",
+  "version": "1.0.0",
+  "description": "Kostenloser Video-Editor mit lokalen KI-Funktionen",
+  "main": "main.js",
+  "author": "Klipwerk",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.7.0",
+    "@mediapipe/tasks-vision": "^0.10.14",
+    "ffmpeg-static": "^5.2.0"
+  },
+  "devDependencies": {
+    "electron": "^37.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "app.klipwerk.editor",
+    "productName": "Klipwerk",
+    "asar": false,
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**",
+      "assets/**",
+      "package.json",
+      "node_modules/**",
+      "!node_modules/onnxruntime-node/**",
+      "!node_modules/sharp/**",
+      "!node_modules/@img/**",
+      "!node_modules/**/*.map",
+      "!node_modules/@huggingface/transformers/src/**",
+      "!node_modules/@huggingface/transformers/types/**",
+      "!node_modules/@huggingface/transformers/dist/transformers.node*",
+      "!node_modules/@huggingface/transformers/dist/transformers.web*",
+      "!node_modules/@huggingface/transformers/dist/transformers.js",
+      "!node_modules/onnxruntime-web/**",
+      "!node_modules/onnxruntime-common/**"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "signAndEditExecutable": true
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

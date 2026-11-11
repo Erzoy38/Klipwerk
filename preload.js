@@ -1,0 +1,26 @@
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
+
+const inv = (ch) => (...a) => ipcRenderer.invoke(ch, ...a);
+
+contextBridge.exposeInMainWorld('api', {
+  openMedia: inv('dialog:openMedia'),
+  saveProjectDialog: inv('dialog:saveProject'),
+  openProject: inv('dialog:openProject'),
+  writeProject: inv('project:write'),
+  saveExportDialog: inv('dialog:saveExport'),
+  showItem: inv('shell:showItem'),
+  exists: inv('fs:exists'),
+  probe: inv('media:probe'),
+  transcode: inv('media:transcode'),
+  renderPcm: inv('audio:renderPcm'),
+  enhanceAudio: inv('audio:enhance'),
+  ttsVoices: inv('tts:voices'),
+  ttsSpeak: inv('tts:speak'),
+  exportStart: inv('export:start'),
+  exportFrame: inv('export:frame'),
+  exportEnd: inv('export:end'),
+  exportCancel: inv('export:cancel'),
+  info: inv('app:info'),
+  pathForFile: (file) => { try { return webUtils.getPathForFile(file); } catch { return ''; } },
+  onProgress: (cb) => ipcRenderer.on('progress', (_e, d) => cb(d)),
+});
