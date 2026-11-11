@@ -1,0 +1,30 @@
+name: Windows-Version bauen
+
+# Start: auf GitHub unter "Actions" -> "Windows-Version bauen" -> "Run workflow"
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx electron-builder --win --publish never
+      - name: Release anlegen
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          gh release delete "v$VERSION" --yes --cleanup-tag || true
+          gh release create "v$VERSION" dist/*.exe --target "$GITHUB_SHA" \
+            --title "Klipwerk $VERSION" \
+            --notes "Windows-Version (64 Bit): Setup-Datei zum Installieren oder portable EXE zum direkten Starten. Copyright © 2026 Erzoy38"

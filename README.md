@@ -12,6 +12,8 @@ Kostenloser Video-Editor für Windows mit lokalen KI-Funktionen. Kein Konto, kei
 2. `Installieren.bat` doppelklicken (lädt einmalig die Abhängigkeiten).
 3. `Starten.bat` doppelklicken.
 
+**Automatisch auf GitHub bauen:** im Repository unter „Actions“ → „Windows-Version bauen“ → „Run workflow“. Nach einigen Minuten liegt die fertige EXE unter „Releases“.
+
 Mit `EXE-erstellen.bat` entsteht im Ordner `dist` ein Installationsprogramm und eine portable EXE.
 
 ## Funktionen
