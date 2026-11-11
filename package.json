@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Kostenloser Video-Editor mit lokalen KI-Funktionen",
   "main": "main.js",
-  "author": "Klipwerk",
+  "author": "Erzoy38",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
@@ -52,6 +52,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    }
+    },
+    "copyright": "Copyright © 2026 Erzoy38"
   }
 }

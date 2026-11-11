@@ -64,3 +64,9 @@ Sprachmodelle komplett offline nutzen: Modellordner nach `assets/models/Xenova/w
 - Der Export berechnet jedes Bild einzeln und ist deshalb langsamer als Echtzeit.
 - Hintergrund entfernen erkennt Personen, keine beliebigen Objekte.
 - KI-Funktionen, die große Server-Modelle brauchen (Video aus Text erzeugen, KI-Avatare), sind nicht enthalten.
+
+## Lizenz und Copyright
+
+Copyright © 2026 Erzoy38. Veröffentlicht unter der MIT-Lizenz, siehe [LICENSE](LICENSE).
+
+Klipwerk nutzt Open-Source-Komponenten mit eigenen Lizenzen: Electron, FFmpeg (über `ffmpeg-static`, GPL), Transformers.js mit Whisper-Modellen und MediaPipe.
