@@ -1,5 +1,10 @@
 // Eigenschaften-Leiste rechts: zeigt und ändert die Werte des ausgewählten Clips
-import { S, on, emit, getMedia, selectedClip, commit, touched, changed, maxDuration, trackClips, clipEnd, clamp, FILTER_DEFAULT } from './state.js';
+import {
+  S, on, emit, getMedia, selectedClip, commit, touched, changed, maxDuration, trackClips, clipEnd, clamp, FILTER_DEFAULT,
+  evalProp, setProp, localTime, hasKf, kfAt, toggleKeyframe, clearKeyframes,
+} from './state.js';
+import { freezeFrame, detachAudio, reverseClip, removeSilence } from './tools.js';
+import { splitAtPlayhead, duplicateSelected, rippleDelete } from './timeline.js';
 import { FX_LIST, FILTER_PRESETS, ANIMS_IN, ANIMS_OUT } from './effects.js';
 
 const body = document.getElementById('inspBody');
@@ -87,24 +92,69 @@ function build() {
   }
 
   if (visual) {
-    const s = section('Position & Größe', () => { Object.assign(c, { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, flip: false }); touched(); commit(); refresh(); });
-    slider(s, 'Größe', () => c.scale, (v) => { c.scale = v; }, 0.05, 4, 0.01, pct);
-    slider(s, 'Position X', () => c.x, (v) => { c.x = v; }, -S.project.width, S.project.width, 1, (v) => Math.round(v));
-    slider(s, 'Position Y', () => c.y, (v) => { c.y = v; }, -S.project.height, S.project.height, 1, (v) => Math.round(v));
-    slider(s, 'Drehung', () => c.rotation, (v) => { c.rotation = v; }, -180, 180, 1, (v) => `${v}°`);
-    slider(s, 'Deckkraft', () => c.opacity, (v) => { c.opacity = v; }, 0, 1, 0.01, pct);
+    const s = section('Position & Größe', () => { Object.assign(c, { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, flip: false, kf: {} }); touched(); commit(); emit('labels'); refresh(); });
+    const P = (n) => () => evalProp(c, n, localTime(c));
+    const W = (n) => (v) => setProp(c, n, v);
+    const kfLabels = () => { if (hasKf(c)) emit('labels'); };
+    const tr = [
+      slider(s, 'Größe', P('scale'), W('scale'), 0.05, 4, 0.01, pct),
+      slider(s, 'Position X', P('x'), W('x'), -S.project.width, S.project.width, 1, (v) => Math.round(v)),
+      slider(s, 'Position Y', P('y'), W('y'), -S.project.height, S.project.height, 1, (v) => Math.round(v)),
+      slider(s, 'Drehung', P('rotation'), W('rotation'), -180, 180, 1, (v) => `${Math.round(v)}°`),
+      slider(s, 'Deckkraft', P('opacity'), W('opacity'), 0, 1, 0.01, pct),
+    ];
+    for (const f of tr) f.querySelector('input').addEventListener('change', kfLabels);
+    const kr = h('div', 'kf-row');
+    const kb = h('button', 'btn'), kc = h('button', 'btn', 'Keyframes löschen');
+    kb.title = 'Speichert Position, Größe, Drehung und Deckkraft an dieser Stelle. Zwischen zwei Keyframes wird die Bewegung automatisch berechnet.';
+    kb.onclick = () => { toggleKeyframe(c); touched(); commit(); emit('labels'); refresh(); };
+    kc.onclick = () => { clearKeyframes(c); touched(); commit(); emit('labels'); refresh(); };
+    updaters.push(() => { const on = kfAt(c, localTime(c)); kb.textContent = on ? '◆ Keyframe entfernen' : '◇ Keyframe setzen'; kb.classList.toggle('on', on); kc.style.display = hasKf(c) ? '' : 'none'; });
+    kr.append(kb, kc); s.appendChild(kr);
+    selectBox(s, 'Mischmodus', [['source-over', 'Normal'], ['screen', 'Aufhellen (Screen)'], ['lighter', 'Addieren'], ['multiply', 'Multiplizieren'], ['overlay', 'Überlagern'], ['soft-light', 'Weiches Licht'], ['darken', 'Abdunkeln'], ['lighten', 'Heller'], ['difference', 'Differenz']], () => c.blend || 'source-over', (v) => { c.blend = v; });
     if (c.type !== 'text') {
       const fill = h('div', 'seg');
       const b1 = h('button', 'btn', 'Einpassen'), b2 = h('button', 'btn', 'Füllen'), b3 = h('button', 'btn', 'Spiegeln');
-      b1.onclick = () => { c.scale = 1; c.x = 0; c.y = 0; touched(); commit(); refresh(); };
+      b1.onclick = () => { setProp(c, 'scale', 1); setProp(c, 'x', 0); setProp(c, 'y', 0); touched(); commit(); refresh(); };
       b2.onclick = () => {
         const sw = m?.width || S.project.width, sh = m?.height || S.project.height;
         const fit = Math.min(S.project.width / sw, S.project.height / sh), cover = Math.max(S.project.width / sw, S.project.height / sh);
-        c.scale = cover / fit; c.x = 0; c.y = 0; touched(); commit(); refresh();
+        setProp(c, 'scale', cover / fit); setProp(c, 'x', 0); setProp(c, 'y', 0); touched(); commit(); refresh();
       };
       b3.onclick = () => { c.flip = !c.flip; touched(); commit(); };
       fill.append(b1, b2, b3); row(s, 'Anpassen', fill);
     }
+  }
+
+  if (c.type === 'video' || c.type === 'image') {
+    const s = section('Zuschnitt & Maske', () => { c.crop = { l: 0, r: 0, t: 0, b: 0 }; c.mask = 'none'; touched(); commit(); refresh(); });
+    const cp = (v) => `${Math.round(v * 100)}%`;
+    slider(s, 'Links', () => c.crop.l, (v) => { c.crop.l = Math.min(v, 0.95 - c.crop.r); }, 0, 0.9, 0.01, cp);
+    slider(s, 'Rechts', () => c.crop.r, (v) => { c.crop.r = Math.min(v, 0.95 - c.crop.l); }, 0, 0.9, 0.01, cp);
+    slider(s, 'Oben', () => c.crop.t, (v) => { c.crop.t = Math.min(v, 0.95 - c.crop.b); }, 0, 0.9, 0.01, cp);
+    slider(s, 'Unten', () => c.crop.b, (v) => { c.crop.b = Math.min(v, 0.95 - c.crop.t); }, 0, 0.9, 0.01, cp);
+    selectBox(s, 'Maske', [['none', 'Keine'], ['round', 'Abgerundet'], ['circle', 'Kreis / Oval'], ['square', 'Quadrat'], ['heart', 'Herz']], () => c.mask || 'none', (v) => { c.mask = v; });
+
+    const g = section('Greenscreen');
+    toggles(g, 'Farbe entfernen', [{ label: 'Ein', get: () => c.chroma.on, set: (v) => { c.chroma.on = v; } }]);
+    color(g, 'Schlüsselfarbe', () => c.chroma.color, (v) => { c.chroma.color = v; });
+    slider(g, 'Toleranz', () => c.chroma.tol, (v) => { c.chroma.tol = v; }, 0.05, 0.8, 0.01, pct);
+    slider(g, 'Weiche Kante', () => c.chroma.soft, (v) => { c.chroma.soft = v; }, 0.01, 0.5, 0.01, pct);
+  }
+
+  {
+    const s = section('Werkzeuge'); const grid = h('div', 'tool-grid');
+    const tool = (label, fn, title) => { const b = h('button', 'btn', label); if (title) b.title = title; b.onclick = fn; grid.appendChild(b); };
+    tool('✂ Teilen', splitAtPlayhead, 'Am Abspielkopf teilen (S)');
+    tool('⧉ Duplizieren', duplicateSelected, 'Strg+D');
+    tool('⇤ Löschen & Lücke schließen', rippleDelete, 'Umschalt+Entf');
+    if (c.type === 'video') {
+      tool('❄ Standbild', () => freezeFrame(), 'Friert das Bild am Abspielkopf für 2 Sekunden ein');
+      tool('⏪ Rückwärts', reverseClip, 'Spielt den Clip rückwärts ab');
+      if (m?.hasAudio) tool('♪ Ton abtrennen', detachAudio, 'Legt den Ton als eigenen Clip auf eine Audiospur');
+    }
+    if ((c.type === 'video' || c.type === 'audio') && m?.hasAudio) tool('⏭ Pausen entfernen', () => removeSilence(), 'Schneidet stille Stellen automatisch heraus');
+    s.appendChild(grid);
   }
 
   if (c.type === 'video' || c.type === 'audio') {
@@ -164,5 +214,6 @@ function build() {
 on('selection', build);
 on('project', build);
 on('props', refresh);
+on('time', () => { const c = selectedClip(); if (c && c.type !== 'audio' && hasKf(c)) refresh(); });
 on('inspector', build);
 build();

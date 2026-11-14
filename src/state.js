@@ -36,19 +36,87 @@ export const FILTER_DEFAULT = { preset: 'none', brightness: 100, contrast: 100, 
 export function visualDefaults() {
   return {
     x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, flip: false,
-    filter: { ...FILTER_DEFAULT }, fx: {},
+    filter: { ...FILTER_DEFAULT }, fx: {}, blend: 'source-over', kf: {},
     animIn: { type: 'none', dur: 0.5 }, animOut: { type: 'none', dur: 0.5 },
   };
 }
-export function audioDefaults() {
-  return { volume: 1, fadeIn: 0, fadeOut: 0, muted: false, enhance: false, enhancedPath: null };
+export function mediaVisualDefaults() {
+  return {
+    bg: { remove: false, mode: 'transparent', color: '#00b140', invert: false },
+    crop: { l: 0, r: 0, t: 0, b: 0 }, mask: 'none',
+    chroma: { on: false, color: '#00d430', tol: 0.28, soft: 0.12 },
+  };
 }
+export function audioDefaults() {
+  return { volume: 1, fadeIn: 0, fadeOut: 0, muted: false, afx: 'none', afxPath: null };
+}
+
+// Ältere Projektdateien auf den aktuellen Stand bringen
+export function migrateProject(p) {
+  for (const c of p.clips) {
+    if (c.type !== 'audio') { c.blend ||= 'source-over'; c.kf ||= {}; }
+    if (c.type === 'video' || c.type === 'image') { const d = mediaVisualDefaults(); for (const k of Object.keys(d)) c[k] ||= d[k]; }
+    if (c.type === 'video' || c.type === 'audio') {
+      if (c.afx == null) { c.afx = c.enhance ? 'enhance' : 'none'; c.afxPath = c.enhancedPath || null; }
+      delete c.enhance; delete c.enhancedPath;
+    }
+  }
+  return p;
+}
+
+// ---------- Keyframes: Werte, die sich über die Clipdauer verändern ----------
+export const KF_PROPS = ['x', 'y', 'scale', 'rotation', 'opacity'];
+const KF_EPS = 0.045;
+export function evalProp(clip, name, local) {
+  const k = clip.kf && clip.kf[name];
+  if (!k || !k.length) return clip[name];
+  if (local <= k[0].t) return k[0].v;
+  const last = k[k.length - 1];
+  if (local >= last.t) return last.v;
+  for (let i = 1; i < k.length; i++) {
+    if (local <= k[i].t) {
+      const a = k[i - 1], b = k[i]; let u = (local - a.t) / Math.max(1e-6, b.t - a.t);
+      u = u * u * (3 - 2 * u);
+      return a.v + (b.v - a.v) * u;
+    }
+  }
+  return last.v;
+}
+export const localTime = (clip) => clamp(S.time - clip.start, 0, clip.duration);
+export const hasKf = (clip) => !!clip.kf && KF_PROPS.some((n) => clip.kf[n] && clip.kf[n].length);
+export const kfTimes = (clip) => { const set = new Set(); if (clip.kf) for (const n of KF_PROPS) for (const k of clip.kf[n] || []) set.add(+k.t.toFixed(3)); return [...set].sort((a, b) => a - b); };
+export const kfAt = (clip, local) => kfTimes(clip).some((t) => Math.abs(t - local) < KF_EPS);
+function putKey(clip, name, local, v) {
+  const arr = (clip.kf[name] ||= []);
+  const hit = arr.find((k) => Math.abs(k.t - local) < KF_EPS);
+  if (hit) hit.v = v; else { arr.push({ t: local, v }); arr.sort((a, b) => a.t - b.t); }
+}
+// Setzt einen Wert; gibt es für die Eigenschaft Keyframes, wird an der aktuellen Stelle einer geschrieben
+export function setProp(clip, name, value, local = localTime(clip)) {
+  if (clip.kf && clip.kf[name] && clip.kf[name].length) putKey(clip, name, local, value); else clip[name] = value;
+}
+export function toggleKeyframe(clip, local = localTime(clip)) {
+  clip.kf ||= {};
+  if (kfAt(clip, local)) {
+    for (const n of KF_PROPS) {
+      if (!clip.kf[n]) continue;
+      const v = evalProp(clip, n, local);
+      clip.kf[n] = clip.kf[n].filter((k) => Math.abs(k.t - local) >= KF_EPS);
+      if (!clip.kf[n].length) { delete clip.kf[n]; clip[n] = v; }
+    }
+    return false;
+  }
+  for (const n of KF_PROPS) putKey(clip, n, local, evalProp(clip, n, local));
+  return true;
+}
+export function clearKeyframes(clip) { const l = localTime(clip); for (const n of KF_PROPS) clip[n] = evalProp(clip, n, l); clip.kf = {}; }
+export function shiftKeyframes(clip, delta) { if (!clip.kf) return; for (const n of KF_PROPS) for (const k of clip.kf[n] || []) k.t -= delta; }
 
 export function makeMediaClip(media, trackId, start) {
   const base = { id: uid('c'), trackId, mediaId: media.id, start, offset: 0, speed: 1 };
   if (media.type === 'audio') return { ...base, type: 'audio', duration: media.duration, ...audioDefaults() };
-  if (media.type === 'image') return { ...base, type: 'image', duration: 5, ...visualDefaults(), bg: { remove: false, mode: 'transparent', color: '#00b140', invert: false } };
-  return { ...base, type: 'video', duration: media.duration, ...visualDefaults(), ...audioDefaults(), bg: { remove: false, mode: 'transparent', color: '#00b140', invert: false } };
+  if (media.type === 'image') return { ...base, type: 'image', duration: 5, ...visualDefaults(), ...mediaVisualDefaults() };
+  return { ...base, type: 'video', duration: media.duration, ...visualDefaults(), ...audioDefaults(), ...mediaVisualDefaults() };
 }
 
 export function makeTextClip(trackId, start, style = {}) {

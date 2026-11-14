@@ -29,6 +29,21 @@ export const segmenter = {
     this.onState?.(); this.onReady?.();
   },
 
+  // Schwerpunkt der erkannten Person (0..1) – für das automatische Zentrieren
+  locate(el, sw, sh) {
+    if (this.state !== 'ready') return null;
+    const inW = 256, inH = Math.max(16, Math.round((256 * sh) / sw));
+    if (inCanvas.width !== inW || inCanvas.height !== inH) { inCanvas.width = inW; inCanvas.height = inH; }
+    inCtx.drawImage(el, 0, 0, inW, inH);
+    const res = seg.segment(inCanvas); const mask = res.confidenceMasks[res.confidenceMasks.length - 1];
+    const data = mask.getAsFloat32Array(); const mw = mask.width, mh = mask.height;
+    let sx = 0, sy = 0, n = 0;
+    for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) { const v = data[y * mw + x]; if (v > 0.5) { sx += x; sy += y; n++; } }
+    res.close?.();
+    if (n < mw * mh * 0.01) return null;
+    return { x: sx / n / mw, y: sy / n / mh, area: n / (mw * mh) };
+  },
+
   // Liefert eine Canvas mit freigestellter Person (oder null, solange das Modell lädt)
   cutout(el, sw, sh, invert) {
     if (this.state !== 'ready') { if (this.state === 'idle') this.load(); return null; }

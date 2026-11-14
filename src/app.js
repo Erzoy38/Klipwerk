@@ -1,7 +1,8 @@
 // Klipwerk – Start, Projektverwaltung, Tastenkürzel
-import { S, on, emit, newProject, initHistory, undo, redo, canUndo, canRedo, commit, changed, projectDuration, fmtTime, toast, select } from './state.js';
+import { S, on, emit, newProject, initHistory, undo, redo, canUndo, canRedo, commit, changed, projectDuration, fmtTime, toast, select, migrateProject, selectedClip, toggleKeyframe, touched } from './state.js';
 import { player, play, pause, toggle, seek, layout } from './player.js';
-import { build, splitAtPlayhead, deleteSelected, duplicateSelected } from './timeline.js';
+import { build, splitAtPlayhead, deleteSelected, duplicateSelected, rippleDelete, copySelected, pasteClip } from './timeline.js';
+import { saveSnapshot } from './tools.js';
 import './inspector.js';
 import { renderMedia } from './panels.js';
 import { openExportDialog } from './exporter.js';
@@ -24,7 +25,7 @@ async function save() {
     let path = S.filePath;
     if (!path) { path = await api.saveProjectDialog(S.project.name); if (!path) return; }
     await api.writeProject(path, JSON.stringify(S.project));
-    S.filePath = path; S.dirty = false; toast('Projekt gespeichert.', 'ok');
+    S.filePath = path; S.dirty = false; api.autosaveClear(); toast('Projekt gespeichert.', 'ok');
   } catch (e) {
     S.filePath = null; toast(`Speichern fehlgeschlagen: ${e.message}`, 'error');
   }
@@ -37,12 +38,13 @@ async function open() {
     if (!p || !Array.isArray(p.clips) || !Array.isArray(p.tracks) || !Array.isArray(p.media)) throw new Error('keine gültige Projektdatei');
     const missing = [];
     for (const m of p.media) if (!(await api.exists(m.path))) missing.push(m.name);
-    loadProject(p, r.path);
+    loadProject(migrateProject(p), r.path);
     if (missing.length) toast(`Diese Dateien wurden nicht gefunden: ${missing.join(', ')}`, 'error', 9000);
   } catch (e) { toast(`Projekt konnte nicht geöffnet werden: ${e.message}`, 'error'); }
 }
 
-$('btnNew').onclick = async () => { if (await confirmDiscard()) loadProject(newProject()); };
+$('btnNew').onclick = async () => { if (await confirmDiscard()) { loadProject(newProject()); api.autosaveClear(); } };
+$('btnSnap').onclick = saveSnapshot;
 $('btnOpen').onclick = open;
 $('btnSave').onclick = save;
 $('btnUndo').onclick = undo;
@@ -83,6 +85,10 @@ window.addEventListener('keydown', (e) => {
   if (ctrl && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
   else if (ctrl && k === 'y') { e.preventDefault(); redo(); }
   else if (ctrl && k === 'd') { e.preventDefault(); duplicateSelected(); }
+  else if (ctrl && k === 'c') { e.preventDefault(); copySelected(); }
+  else if (ctrl && k === 'v') { e.preventDefault(); pasteClip(); }
+  else if (k === 'k' && !ctrl) { const c = selectedClip(); if (c && c.type !== 'audio') { toggleKeyframe(c); touched(); commit(); emit('labels'); emit('props'); } }
+  else if ((k === 'delete' || k === 'backspace') && e.shiftKey) rippleDelete();
   else if (ctrl && k === 'b') { e.preventDefault(); splitAtPlayhead(); }
   else if (e.code === 'Space') { e.preventDefault(); toggle(); }
   else if (k === 's' && !ctrl) splitAtPlayhead();
@@ -99,4 +105,21 @@ window.addEventListener('beforeunload', (e) => { if (S.dirty && !window.__skipDi
 
 loadProject(newProject());
 build();
+
+// Automatische Sicherung: alle 30 Sekunden, Wiederherstellung beim nächsten Start
+let lastAuto = '';
+setInterval(() => {
+  if (!S.dirty || !S.project.clips.length) return;
+  const json = JSON.stringify(S.project);
+  if (json !== lastAuto) { lastAuto = json; api.autosaveWrite(json).catch(() => {}); }
+}, 30000);
+api.autosaveRead().then((text) => {
+  if (!text || window.__noRestore) return;
+  try {
+    const p = JSON.parse(text);
+    if (!p.clips?.length) return;
+    if (confirm('Es gibt eine automatische Sicherung der letzten Sitzung. Wiederherstellen?')) { loadProject(migrateProject(p)); S.dirty = true; }
+    else api.autosaveClear();
+  } catch { api.autosaveClear(); }
+});
 window.__klipwerk = { S, emit, seek, play, pause }; // für Diagnose und Tests

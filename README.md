@@ -18,24 +18,31 @@ Mit `EXE-erstellen.bat` entsteht im Ordner `dist` ein Installationsprogramm und 
 
 ## Funktionen
 
-- **Timeline:** mehrere Video-, Audio- und Textspuren; Clips verschieben, trimmen, teilen, duplizieren; Einrasten; Zoom; Rückgängig/Wiederholen
+- **Timeline:** mehrere Video-, Audio- und Textspuren; Clips verschieben, trimmen, teilen, duplizieren, kopieren/einfügen; Löschen mit Lückenschluss; Einrasten; Zoom; Rückgängig/Wiederholen; Wellenformen
 - **Medien:** Videos, Bilder, Audio (nicht abspielbare Formate wie HEVC/MKV/AVI werden automatisch umgewandelt)
-- **Text:** 9 Stilvorlagen, Schrift, Kontur, Hintergrund, Schatten
+- **Keyframes:** Position, Größe, Drehung und Deckkraft über die Zeit animieren
+- **Zuschnitt und Masken:** Ränder beschneiden; Masken abgerundet, Kreis, Quadrat, Herz
+- **Greenscreen:** Schlüsselfarbe frei wählbar, mit Toleranz und weicher Kante
+- **Mischmodi:** Screen, Addieren, Multiplizieren, Überlagern und weitere
+- **Text und Sticker:** 9 Stilvorlagen, 30 Sticker, 12 Formen; Schrift, Kontur, Hintergrund, Schatten
 - **Filter:** 14 Farbfilter plus Helligkeit, Kontrast, Sättigung, Farbton, Weichzeichner
 - **FX-Effekte:** RGB-Split, Glitch, VHS, Pixel, Vignette, Filmkorn, Glow, Spiegel, Kino-Balken, Blitz, Wackeln, Zoom-Puls, Sanfter Zoom, Regenbogen
 - **Animationen:** 12 Ein- und 10 Ausblend-Animationen (auch als Übergänge nutzbar)
-- **Tempo, Lautstärke, Ein-/Ausblenden** je Clip
+- **Clip-Werkzeuge:** Standbild, Rückwärts, Ton abtrennen, Pausen automatisch entfernen, Tempo, Lautstärke, Ein-/Ausblenden
+- **Ton:** Sprachaufnahme über das Mikrofon; Stimmeffekte (tief, hoch, Roboter, Echo, Halle, Telefon, Funkgerät)
 - **Formate:** 16:9, 9:16, 1:1, 4:5, 4:3
-- **Export:** MP4 (H.264 + AAC), ohne Wasserzeichen
+- **Export:** MP4 (H.264 + AAC), GIF, nur Ton (MP3/WAV), Einzelbild (PNG), Untertitel (SRT) – ohne Wasserzeichen
+- **Automatische Sicherung:** alle 30 Sekunden, Wiederherstellung beim nächsten Start
 
 ### KI-Funktionen (Reiter „KI“)
 
 | Funktion | Technik | Internet nötig? |
 |---|---|---|
-| Auto-Untertitel | Whisper (läuft lokal) | nur beim ersten Mal, um das Sprachmodell zu laden (40–250 MB) |
+| Auto-Untertitel (auch mit Übersetzung ins Englische) | Whisper (läuft lokal) | nur beim ersten Mal, um das Sprachmodell zu laden (40–250 MB) |
+| Person im Bild halten (Auto-Reframe) | MediaPipe-Personensegmentierung | nein |
 | Hintergrund entfernen | MediaPipe-Personensegmentierung | nein, Modell liegt bei |
 | Text-zu-Sprache | Windows-Sprachausgabe | nein |
-| Audio verbessern | FFmpeg-Rauschfilter und Kompressor | nein |
+| Audio verbessern und Stimmeffekte | FFmpeg-Filter | nein |
 
 Weitere Stimmen für Text-zu-Sprache: Windows-Einstellungen → Zeit und Sprache → Sprachausgabe.
 
@@ -48,6 +55,9 @@ Sprachmodelle komplett offline nutzen: Modellordner nach `assets/models/Xenova/w
 | Leertaste | Wiedergabe / Pause |
 | S oder Strg+B | Clip am Abspielkopf teilen |
 | Entf | Clip löschen |
+| Umschalt+Entf | Löschen und Lücke schließen |
+| K | Keyframe setzen / entfernen |
+| Strg+C / Strg+V | Clip kopieren / einfügen |
 | Strg+D | Duplizieren |
 | Strg+Z / Strg+Y | Rückgängig / Wiederholen |
 | ← / → (mit Umschalt: 10 Bilder) | Bild zurück / vor |
@@ -59,6 +69,7 @@ Sprachmodelle komplett offline nutzen: Modellordner nach `assets/models/Xenova/w
 - `main.js` – Electron-Hauptprozess: Dateien, FFmpeg, Sprachausgabe, Export
 - `src/render.js`, `src/effects.js` – Bildberechnung (Vorschau und Export nutzen denselben Code)
 - `src/player.js`, `src/timeline.js`, `src/inspector.js`, `src/panels.js` – Oberfläche
+- `src/tools.js`, `src/chroma.js`, `src/waveform.js` – Schnittwerkzeuge, Greenscreen, Wellenformen
 - `src/ai/` – Untertitel (Whisper), Hintergrundentfernung (MediaPipe)
 
 ## Grenzen

@@ -91,7 +91,7 @@ export function insertCaptions(caps) {
   commit(); changed();
 }
 
-export async function generateCaptions({ model, language, onStatus }) {
+export async function generateCaptions({ model, language, translate, onStatus }) {
   const plan = audioPlan();
   if (!plan.clips.length || plan.duration <= 0) throw new Error('In der Timeline ist kein Ton vorhanden.');
   onStatus('Ton wird vorbereitet …', 0);
@@ -103,7 +103,7 @@ export async function generateCaptions({ model, language, onStatus }) {
   for (let i = 0; i < parts.length; i++) {
     onStatus(`Sprache wird erkannt … ${Math.round((i / parts.length) * 100)} %`, 0.3 + 0.7 * (i / parts.length));
     const p = parts[i]; const slice = audio.slice(p.start, p.end); const len = slice.length / SR;
-    const r = await call({ type: 'run', model, language, audio: slice }, [slice.buffer]);
+    const r = await call({ type: 'run', model, language, task: translate ? 'translate' : 'transcribe', audio: slice }, [slice.buffer]);
     for (const ch of r.chunks) {
       const a = ch.timestamp?.[0] ?? 0; let b = ch.timestamp?.[1]; if (b == null || b <= a) b = len;
       segments.push({ start: p.offset + Math.min(a, len), end: p.offset + Math.min(b, len), text: ch.text || '' });

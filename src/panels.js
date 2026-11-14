@@ -4,6 +4,7 @@ import { FILTER_PRESETS, presetValues, FX_LIST, ANIMS_IN, ANIMS_OUT, filterStrin
 import { addMedia, addText } from './timeline.js';
 import { segmenter } from './ai/segmenter.js';
 import { generateCaptions } from './ai/captions.js';
+import { autoReframe, toggleRecording, isRecording, exportSrt, importSrt } from './tools.js';
 
 const api = window.api;
 const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -139,6 +140,23 @@ for (const t of TEXT_STYLES) {
   textGrid.appendChild(b);
 }
 
+// Sticker und Formen (als frei skalierbare Textclips)
+{
+  const panel = document.querySelector('.panel[data-panel="text"]');
+  const add = (title, items, style) => {
+    panel.appendChild(h('h3', null, title)); const g = h('div', 'sticker-grid');
+    for (const ch of items) {
+      const b = h('button', null, ch);
+      b.onclick = () => addText({ text: ch, size: Math.round(Math.min(S.project.width, S.project.height) * 0.22), bold: false, shadow: 0, strokeWidth: 0, ...style });
+      g.appendChild(b);
+    }
+    panel.appendChild(g);
+  };
+  textGrid.style.marginBottom = '14px';
+  add('Sticker', ['😀', '😂', '😍', '😎', '🤯', '😱', '🥳', '😢', '👍', '👏', '🙏', '💪', '❤️', '🔥', '⭐', '✨', '🎉', '💯', '✅', '❌', '⚠️', '💡', '🎵', '📌', '👉', '👇', '👆', '🚀', '🏆', '💰'], { font: 'Segoe UI Emoji' });
+  add('Formen', ['●', '■', '▲', '★', '♥', '➜', '⬆', '⬇', '▬', '◆', '○', '□'], { font: 'Segoe UI Symbol', color: '#ffffff' });
+}
+
 // ---------- Filter / FX / Animationen ----------
 const filterGrid = document.getElementById('filterGrid');
 for (const p of FILTER_PRESETS) {
@@ -204,10 +222,14 @@ const capCard = card('Auto-Untertitel', 'lokal', 'Erkennt gesprochene Sprache in
 const capModel = sel([['Xenova/whisper-tiny', 'Schnell (ca. 40 MB)'], ['Xenova/whisper-base', 'Ausgewogen (ca. 80 MB)'], ['Xenova/whisper-small', 'Genau (ca. 250 MB)']], 'Xenova/whisper-base');
 const capLang = sel([['german', 'Deutsch'], ['english', 'Englisch'], ['french', 'Französisch'], ['spanish', 'Spanisch'], ['italian', 'Italienisch'], ['turkish', 'Türkisch'], ['polish', 'Polnisch'], ['russian', 'Russisch'], ['arabic', 'Arabisch'], ['portuguese', 'Portugiesisch'], ['dutch', 'Niederländisch'], ['ukrainian', 'Ukrainisch']]);
 const capBtn = h('button', 'btn primary wide', 'Untertitel erzeugen');
-capCard.append(rowOf(h('span', 'dim', 'Sprache'), capLang), rowOf(h('span', 'dim', 'Modell'), capModel), capBtn); capCard.finish();
+const capTr = h('label', 'chk'); const capTrBox = h('input'); capTrBox.type = 'checkbox'; capTr.append(capTrBox, document.createTextNode(' Ins Englische übersetzen'));
+const srtIn = h('button', 'btn', 'SRT laden'), srtOut = h('button', 'btn', 'SRT speichern');
+srtIn.onclick = importSrt; srtOut.onclick = exportSrt; srtIn.style.flex = srtOut.style.flex = '1';
+capCard.append(rowOf(h('span', 'dim', 'Sprache'), capLang), rowOf(h('span', 'dim', 'Modell'), capModel), rowOf(capTr), capBtn, rowOf(srtIn, srtOut)); capCard.finish();
+capBtn.style.marginBottom = '6px';
 capBtn.onclick = async () => {
   capBtn.disabled = true;
-  try { await generateCaptions({ model: capModel.value, language: capLang.value, onStatus: (m, p) => capCard.setStatus(m, p) }); toast('Untertitel wurden eingefügt.', 'ok'); }
+  try { await generateCaptions({ model: capModel.value, language: capLang.value, translate: capTrBox.checked, onStatus: (m, p) => capCard.setStatus(m, p) }); toast('Untertitel wurden eingefügt.', 'ok'); }
   catch (e) {
     console.error(e);
     const net = /fetch|network|Failed to load|ERR_/i.test(e.message);
@@ -260,20 +282,47 @@ ttsBtn.onclick = async () => {
   ttsBtn.disabled = false;
 };
 
-// Audio verbessern
-const enhCard = card('Audio verbessern', 'lokal', 'Entfernt Rauschen und Brummen und gleicht die Lautstärke von Sprachaufnahmen an. Für den ausgewählten Clip.');
-const enhBtn = h('button', 'btn wide', 'Einschalten');
-enhCard.append(enhBtn); enhCard.finish();
+// KI: Person im Bild halten
+const rfCard = card('Person im Bild halten', 'lokal', 'Erkennt die Person im ausgewählten Video und führt den Bildausschnitt automatisch mit – ideal, um Querformat-Videos ins Hochformat zu bringen.');
+const rfBtn = h('button', 'btn wide', 'Analysieren & zentrieren');
+rfCard.append(rfBtn); rfCard.finish();
+rfBtn.onclick = async () => {
+  rfBtn.disabled = true;
+  try { await autoReframe((m, p) => rfCard.setStatus(m, p)); }
+  catch (e) { console.error(e); rfCard.setStatus(e.message, null, true); }
+  rfBtn.disabled = false;
+};
+
+// Sprachaufnahme
+const recCard = card('Sprachaufnahme', 'lokal', 'Nimmt deine Stimme über das Mikrofon auf, während das Video läuft, und legt sie an der Startposition in die Timeline. Am besten mit Kopfhörern.');
+const recBtn = h('button', 'btn wide', '🎙 Aufnahme starten');
+recCard.append(recBtn); recCard.finish();
+recBtn.onclick = async () => {
+  try {
+    await toggleRecording((on, msg, err) => {
+      recBtn.textContent = on ? '■ Aufnahme beenden' : '🎙 Aufnahme starten'; recBtn.classList.toggle('danger', on);
+      recCard.setStatus(msg, null, err);
+    });
+  } catch (e) { recCard.setStatus(e.message, null, true); }
+};
+
+// Ton-Effekte (Audio verbessern und Stimmverzerrer)
+const enhCard = card('Ton verbessern & Stimmeffekte', 'lokal', 'Entfernt Rauschen oder verändert die Stimme. Gilt für den ausgewählten Clip und wird auch exportiert.');
+const afxSel = sel([['none', 'Kein Effekt'], ['enhance', 'Audio verbessern (Rauschen entfernen)'], ['deep', 'Tiefe Stimme'], ['high', 'Hohe Stimme'], ['robot', 'Roboter'], ['echo', 'Echo'], ['hall', 'Halle'], ['phone', 'Telefon'], ['radio', 'Funkgerät']]);
+const enhBtn = h('button', 'btn wide', 'Anwenden');
+enhCard.append(rowOf(afxSel), enhBtn); enhCard.finish();
 const enhClip = () => { const c = selectedClip(); return c && (c.type === 'video' || c.type === 'audio') && getMedia(c.mediaId)?.hasAudio ? c : null; };
 enhBtn.onclick = async () => {
   const c = enhClip(); if (!c) { toast('Wähle zuerst einen Clip mit Ton aus.'); return; }
-  if (c.enhance) { c.enhance = false; touched(); commit(); emit('labels'); syncAi(); return; }
-  enhBtn.disabled = true; enhCard.setStatus('Ton wird analysiert und bereinigt …');
+  const fx = afxSel.value;
+  if (fx === 'none') { c.afx = 'none'; c.afxPath = null; touched(); commit(); emit('labels'); enhCard.setStatus('Effekt entfernt.'); return; }
+  enhBtn.disabled = true; enhCard.setStatus('Ton wird berechnet …');
   try {
-    c.enhancedPath = await api.enhanceAudio(getMedia(c.mediaId).path); c.enhance = true;
-    touched(); commit(); emit('labels'); enhCard.setStatus('Verbesserter Ton ist aktiv.');
-  } catch (e) { console.error(e); enhCard.setStatus(e.message, null, true); }
-  enhBtn.disabled = false; syncAi();
+    const path = await api.processAudio(getMedia(c.mediaId).path, fx);
+    c.afxPath = path; c.afx = fx;
+    touched(); commit(); emit('labels'); enhCard.setStatus('Effekt ist aktiv.');
+  } catch (e) { console.error(e); enhCard.setStatus(e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), null, true); }
+  enhBtn.disabled = false;
 };
 
 function syncAi() {
@@ -286,8 +335,7 @@ function syncAi() {
     bgCard.setStatus(segmenter.state === 'loading' ? 'KI-Modell wird geladen …' : segmenter.state === 'error' ? `Modell konnte nicht geladen werden: ${segmenter.error}` : 'Aktiv – wird auch beim Export angewendet.', null, segmenter.state === 'error');
   } else bgCard.setStatus('');
   const e = enhClip();
-  enhBtn.textContent = e?.enhance ? 'Ausschalten' : 'Einschalten'; enhBtn.classList.toggle('primary', !!e?.enhance);
-  if (!e?.enhance && !enhBtn.disabled) enhCard.setStatus('');
+  if (e && !enhBtn.disabled) afxSel.value = e.afx || 'none';
 }
 
 on('selection', syncLib);

@@ -122,15 +122,33 @@ function runFfmpeg(args, { onStderr, collectStdout } = {}) {
   });
 }
 
+// Wie runFfmpeg, liefert aber die gesamte Protokollausgabe (für Analysen)
+function runFfmpegFull(args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(FFMPEG, args, { windowsHide: true }); let err = '';
+    proc.stderr.on('data', (d) => { err += d.toString(); });
+    proc.on('error', reject); proc.on('close', () => resolve(err));
+  });
+}
+
 function parseDuration(text) {
   const m = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(text);
   return m ? (+m[1]) * 3600 + (+m[2]) * 60 + parseFloat(m[3]) : 0;
 }
 
-const ENHANCE_CHAIN = [
-  'highpass=f=85', 'lowpass=f=13000', 'afftdn=nr=20:nf=-30:tn=1',
-  'acompressor=threshold=-22dB:ratio=3:attack=5:release=140:makeup=4', 'alimiter=limit=0.95',
-].join(',');
+// Ton-Effekte: alle Ketten lassen die Länge unverändert, damit Bild und Ton synchron bleiben
+const AFX = {
+  enhance: ['highpass=f=85', 'lowpass=f=13000', 'afftdn=nr=20:nf=-30:tn=1',
+    'acompressor=threshold=-22dB:ratio=3:attack=5:release=140:makeup=4', 'alimiter=limit=0.95'].join(','),
+  deep: 'aresample=48000,asetrate=48000*0.8,aresample=48000,atempo=1.25',
+  high: 'aresample=48000,asetrate=48000*1.35,aresample=48000,atempo=0.740741',
+  robot: "afftfilt=real='hypot(re,im)*sin(0)':imag='hypot(re,im)*cos(0)':win_size=512:overlap=0.75,volume=1.6",
+  echo: 'aecho=0.8:0.7:140|280:0.4|0.22',
+  hall: 'aecho=0.8:0.88:40|90|150|230:0.35|0.28|0.2|0.14',
+  phone: 'highpass=f=450,lowpass=f=3000,acompressor=threshold=-20dB:ratio=6:makeup=5,alimiter=limit=0.9',
+  radio: 'highpass=f=250,lowpass=f=5500,acompressor=threshold=-24dB:ratio=5:makeup=6,alimiter=limit=0.9',
+};
+const afxOf = (c) => (c.afx && AFX[c.afx]) || (c.enhance ? AFX.enhance : null);
 
 function atempoChain(speed) {
   const parts = []; let s = Math.min(8, Math.max(0.125, speed || 1));
@@ -147,7 +165,7 @@ function buildAudio(plan, inputBase) {
   plan.clips.forEach((c, i) => {
     inputs.push('-ss', Math.max(0, c.srcStart).toFixed(3), '-t', Math.max(0.01, c.srcDur).toFixed(3), '-i', c.path);
     const f = [];
-    if (c.enhance) f.push(ENHANCE_CHAIN);
+    if (afxOf(c)) f.push(afxOf(c));
     f.push(...atempoChain(c.speed));
     const outDur = c.srcDur / (c.speed || 1);
     f.push(`volume=${Math.max(0, c.volume).toFixed(3)}`);
@@ -197,10 +215,11 @@ ipcMain.handle('project:write', async (_e, p, text) => {
   if (!allowedProjectPaths.has(p)) throw new Error('Pfad nicht freigegeben');
   await fsp.writeFile(p, text, 'utf8'); return true;
 });
-ipcMain.handle('dialog:saveExport', async (_e, name) => {
+ipcMain.handle('dialog:saveExport', async (_e, name, ext = 'mp4') => {
+  const kinds = { mp4: 'MP4-Video', gif: 'GIF-Animation', mp3: 'MP3-Audio', wav: 'WAV-Audio' };
   const r = await dialog.showSaveDialog(win, {
-    title: 'Video exportieren', defaultPath: path.join(app.getPath('videos'), `${name || 'Video'}.mp4`),
-    filters: [{ name: 'MP4-Video', extensions: ['mp4'] }],
+    title: 'Exportieren', defaultPath: path.join(app.getPath(ext === 'mp3' || ext === 'wav' ? 'music' : 'videos'), `${name || 'Video'}.${ext}`),
+    filters: [{ name: kinds[ext] || ext, extensions: [ext] }],
   });
   return r.canceled ? null : r.filePath;
 });
@@ -251,15 +270,120 @@ ipcMain.handle('audio:renderPcm', async (_e, plan) => {
   return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
 });
 
-ipcMain.handle('audio:enhance', async (_e, p) => {
+ipcMain.handle('audio:process', async (_e, p, fx) => {
+  if (!AFX[fx]) throw new Error('Unbekannter Effekt');
   const dir = await ensureCache();
-  const out = path.join(dir, `enh_${await fileKey(p)}.m4a`);
+  const out = path.join(dir, `afx_${fx}_${await fileKey(p)}.m4a`);
   try { await fsp.access(out); return out; } catch {}
   const tmp = out + '.tmp.m4a';
-  const r = await runFfmpeg(['-y', '-hide_banner', '-i', p, '-vn', '-map', '0:a:0', '-af', ENHANCE_CHAIN, '-c:a', 'aac', '-b:a', '192k', tmp]);
-  if (r.code !== 0) { fsp.unlink(tmp).catch(() => {}); throw new Error('Audio-Verbesserung fehlgeschlagen: ' + r.stderr.slice(-300)); }
+  const r = await runFfmpeg(['-y', '-hide_banner', '-i', p, '-vn', '-map', '0:a:0', '-af', AFX[fx], '-c:a', 'aac', '-b:a', '192k', tmp]);
+  if (r.code !== 0) { fsp.unlink(tmp).catch(() => {}); throw new Error('Ton-Effekt fehlgeschlagen: ' + r.stderr.slice(-300)); }
   await fsp.rename(tmp, out);
   return out;
+});
+
+
+// Wellenform: Spitzenwerte (50 pro Sekunde) für die Anzeige in der Timeline
+const peakCache = new Map();
+ipcMain.handle('audio:peaks', async (_e, p) => {
+  if (peakCache.has(p)) return peakCache.get(p);
+  const RATE = 4000, WIN = 80;
+  const peaks = []; let rest = Buffer.alloc(0); let cur = 0, n = 0;
+  await new Promise((resolve) => {
+    const proc = spawn(FFMPEG, ['-hide_banner', '-nostdin', '-i', p, '-vn', '-map', '0:a:0', '-ac', '1', '-ar', String(RATE), '-f', 's16le', 'pipe:1'], { windowsHide: true });
+    proc.stderr.on('data', () => {});
+    proc.stdout.on('data', (d) => {
+      const b = rest.length ? Buffer.concat([rest, d]) : d; const len = b.length - (b.length % 2);
+      for (let i = 0; i < len; i += 2) {
+        const v = Math.abs(b.readInt16LE(i)); if (v > cur) cur = v;
+        if (++n === WIN) { peaks.push(Math.min(255, Math.round(Math.sqrt(cur / 32768) * 255))); cur = 0; n = 0; }
+      }
+      rest = b.subarray(len);
+    });
+    proc.on('error', resolve); proc.on('close', resolve);
+  });
+  const out = Uint8Array.from(peaks);
+  if (peakCache.size > 40) peakCache.clear();
+  peakCache.set(p, out);
+  return out;
+});
+
+// Stille Abschnitte finden (für „Pausen entfernen“)
+ipcMain.handle('audio:silences', async (_e, p, noiseDb, minDur) => {
+  const r = await runFfmpegFull(['-hide_banner', '-nostdin', '-i', p, '-vn', '-map', '0:a:0',
+    '-af', `silencedetect=noise=${Number(noiseDb) || -35}dB:d=${Number(minDur) || 0.4}`, '-f', 'null', '-']);
+  const list = []; let start = null;
+  for (const line of r.split(/\r?\n/)) {
+    let m = /silence_start:\s*(-?[\d.]+)/.exec(line); if (m) { start = Math.max(0, parseFloat(m[1])); continue; }
+    m = /silence_end:\s*([\d.]+)/.exec(line); if (m && start != null) { list.push([start, parseFloat(m[1])]); start = null; }
+  }
+  if (start != null) list.push([start, 1e9]);
+  return list;
+});
+
+// Sprachaufnahme speichern (WebM vom Mikrofon -> WAV)
+ipcMain.handle('rec:save', async (_e, buf) => {
+  const dir = path.join(app.getPath('userData'), 'aufnahmen'); await fsp.mkdir(dir, { recursive: true });
+  const base = path.join(dir, `aufnahme_${Date.now().toString(36)}`);
+  await fsp.writeFile(base + '.webm', Buffer.from(buf));
+  const r = await runFfmpeg(['-y', '-hide_banner', '-i', base + '.webm', '-vn', '-ac', '1', '-ar', '48000', base + '.wav']);
+  fsp.unlink(base + '.webm').catch(() => {});
+  if (r.code !== 0) throw new Error('Aufnahme konnte nicht gespeichert werden: ' + r.stderr.slice(-200));
+  return base + '.wav';
+});
+
+ipcMain.handle('image:save', async (_e, buf) => {
+  const dir = path.join(app.getPath('userData'), 'standbilder'); await fsp.mkdir(dir, { recursive: true });
+  const out = path.join(dir, `standbild_${Date.now().toString(36)}.png`);
+  await fsp.writeFile(out, Buffer.from(buf));
+  return out;
+});
+
+// Clip rückwärts abspielen: Ausschnitt wird einmalig umgerechnet
+ipcMain.handle('media:reverse', async (_e, p, start, dur, hasAudio) => {
+  const dir = await ensureCache();
+  const out = path.join(dir, `rev_${await fileKey(p)}_${Math.round(start * 1000)}_${Math.round(dur * 1000)}.mp4`);
+  try { await fsp.access(out); return out; } catch {}
+  const tmp = out + '.tmp.mp4';
+  const args = ['-y', '-hide_banner', '-ss', start.toFixed(3), '-t', dur.toFixed(3), '-i', p, '-vf', 'reverse'];
+  if (hasAudio) args.push('-af', 'areverse', '-c:a', 'aac', '-b:a', '192k'); else args.push('-an');
+  args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-g', '30', '-movflags', '+faststart', tmp);
+  const r = await runFfmpeg(args);
+  if (r.code !== 0) { fsp.unlink(tmp).catch(() => {}); throw new Error('Rückwärts-Umrechnung fehlgeschlagen: ' + r.stderr.slice(-300)); }
+  await fsp.rename(tmp, out);
+  return out;
+});
+
+// Allgemeines Speichern/Öffnen (Untertitel, Einzelbilder)
+const allowedOut = new Set();
+ipcMain.handle('dialog:saveFile', async (_e, o) => {
+  const r = await dialog.showSaveDialog(win, { title: o.title, defaultPath: path.join(app.getPath(o.folder || 'documents'), o.name), filters: o.filters });
+  if (r.canceled || !r.filePath) return null;
+  allowedOut.add(r.filePath); return r.filePath;
+});
+ipcMain.handle('file:write', async (_e, p, data) => {
+  if (!allowedOut.has(p)) throw new Error('Pfad nicht freigegeben');
+  await fsp.writeFile(p, typeof data === 'string' ? data : Buffer.from(data)); return true;
+});
+ipcMain.handle('dialog:openText', async (_e, o) => {
+  const r = await dialog.showOpenDialog(win, { title: o.title, properties: ['openFile'], filters: o.filters });
+  if (r.canceled || !r.filePaths[0]) return null;
+  return { path: r.filePaths[0], text: await fsp.readFile(r.filePaths[0], 'utf8') };
+});
+
+// Automatische Sicherung
+const autosavePath = () => path.join(app.getPath('userData'), 'autosave.klip');
+ipcMain.handle('autosave:write', async (_e, text) => { await fsp.writeFile(autosavePath(), text, 'utf8'); return true; });
+ipcMain.handle('autosave:read', async () => { try { return await fsp.readFile(autosavePath(), 'utf8'); } catch { return null; } });
+ipcMain.handle('autosave:clear', async () => { await fsp.unlink(autosavePath()).catch(() => {}); return true; });
+
+// Nur den Ton der Timeline exportieren (MP3 oder WAV)
+ipcMain.handle('export:audio', async (_e, plan, outPath) => {
+  const a = buildAudio(plan, 0);
+  const codec = /\.wav$/i.test(outPath) ? ['-c:a', 'pcm_s16le'] : ['-c:a', 'libmp3lame', '-b:a', '192k'];
+  const r = await runFfmpeg(['-y', '-hide_banner', '-nostdin', ...a.inputs, '-filter_complex', a.filter, '-map', '[aout]', ...codec, outPath]);
+  if (r.code !== 0) throw new Error('Audio-Export fehlgeschlagen: ' + r.stderr.slice(-300));
+  return true;
 });
 
 // ---------- IPC: Text-zu-Sprache (Windows-Sprachausgabe, offline) ----------
@@ -320,7 +444,9 @@ let exportJob = null;
 ipcMain.handle('export:start', async (e, o) => {
   if (exportJob) throw new Error('Es läuft bereits ein Export');
   const a = buildAudio(o.audio, 1);
-  const args = ['-y', '-hide_banner', '-f', 'image2pipe', '-framerate', String(o.fps), '-c:v', 'mjpeg', '-i', 'pipe:0',
+  const args = o.format === 'gif' ? ['-y', '-hide_banner', '-f', 'image2pipe', '-framerate', String(o.fps), '-c:v', 'mjpeg', '-i', 'pipe:0',
+    '-filter_complex', '[0:v]split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4', '-loop', '0', o.outPath]
+  : ['-y', '-hide_banner', '-f', 'image2pipe', '-framerate', String(o.fps), '-c:v', 'mjpeg', '-i', 'pipe:0',
     ...a.inputs, '-filter_complex', a.filter, '-map', '0:v:0', '-map', '[aout]',
     '-c:v', 'libx264', '-preset', o.preset || 'medium', '-crf', String(o.crf ?? 20), '-pix_fmt', 'yuv420p', '-r', String(o.fps),
     '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', '-t', o.audio.duration.toFixed(3), o.outPath];
@@ -364,6 +490,8 @@ ipcMain.handle('app:info', () => ({ platform: process.platform, version: app.get
 
 app.whenReady().then(() => {
   registerProtocol();
+  const { session } = require('electron');
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(permission === 'media' || permission === 'clipboard-sanitized-write'));
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });

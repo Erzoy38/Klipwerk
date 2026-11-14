@@ -1,5 +1,5 @@
 // Wiedergabe: Medienelemente je Clip, Synchronisation zur Timeline, Vorschau zeichnen, Clips in der Vorschau anfassen
-import { S, emit, on, getMedia, getClip, mediaUrl, clamp, projectDuration, select, commit, touched } from './state.js';
+import { S, emit, on, getMedia, getClip, mediaUrl, clamp, projectDuration, select, commit, touched, evalProp, setProp, localTime } from './state.js';
 import { drawFrame, clipBounds, hitTest, isAudible } from './render.js';
 import { segmenter } from './ai/segmenter.js';
 
@@ -36,7 +36,7 @@ function disposeEntry(e) {
 function ensure(clip) {
   const media = getMedia(clip.mediaId);
   if (!media) return null;
-  const enh = clip.enhance && clip.enhancedPath ? clip.enhancedPath : '';
+  const enh = clip.afx && clip.afx !== 'none' && clip.afxPath ? clip.afxPath : '';
   const key = `${media.path}|${enh}`;
   let e = pool.get(clip.id);
   if (e && e.key === key) return e;
@@ -242,6 +242,14 @@ export async function seekExact(t) {
   await Promise.all(jobs);
 }
 
+// Aktuelles Quellbild eines Clips in voller Auflösung (für Standbilder)
+export function grabFrame(clip) {
+  const src = env.getSource(clip); if (!src) return null;
+  const c = document.createElement('canvas'); c.width = src.w; c.height = src.h;
+  c.getContext('2d').drawImage(src.el, 0, 0, src.w, src.h);
+  return c;
+}
+
 // ---------- Clips in der Vorschau verschieben und skalieren ----------
 let drag = null;
 function toProject(ev) {
@@ -259,14 +267,14 @@ overlay.addEventListener('pointerdown', (ev) => {
       const hx = b.cx + (sx * b.w / 2) * Math.cos(a) - (sy * b.h / 2) * Math.sin(a);
       const hy = b.cy + (sx * b.w / 2) * Math.sin(a) + (sy * b.h / 2) * Math.cos(a);
       if (Math.hypot(p.x - hx, p.y - hy) < 12 * p.k) {
-        drag = { mode: 'scale', clip: sel, s0: sel.scale, d0: Math.max(1, Math.hypot(p.x - b.cx, p.y - b.cy)), cx: b.cx, cy: b.cy };
+        drag = { mode: 'scale', clip: sel, s0: evalProp(sel, 'scale', localTime(sel)), d0: Math.max(1, Math.hypot(p.x - b.cx, p.y - b.cy)), cx: b.cx, cy: b.cy };
         overlay.setPointerCapture(ev.pointerId); return;
       }
     }
   }
   const hit = hitTest(p.x, p.y, S.time);
   select(hit ? hit.id : null); dirty = true;
-  if (hit) { drag = { mode: 'move', clip: hit, px: p.x, py: p.y, x0: hit.x, y0: hit.y, moved: false }; overlay.setPointerCapture(ev.pointerId); }
+  if (hit) { drag = { mode: 'move', clip: hit, px: p.x, py: p.y, x0: evalProp(hit, 'x', localTime(hit)), y0: evalProp(hit, 'y', localTime(hit)), moved: false }; overlay.setPointerCapture(ev.pointerId); }
 });
 overlay.addEventListener('pointermove', (ev) => {
   if (!drag) return;
@@ -275,10 +283,10 @@ overlay.addEventListener('pointermove', (ev) => {
     let nx = drag.x0 + (p.x - drag.px), ny = drag.y0 + (p.y - drag.py);
     if (Math.abs(nx) < 14 * p.k) nx = 0; // an der Mitte einrasten
     if (Math.abs(ny) < 14 * p.k) ny = 0;
-    if (nx !== c.x || ny !== c.y) drag.moved = true;
-    c.x = Math.round(nx); c.y = Math.round(ny);
+    if (nx !== drag.x0 || ny !== drag.y0) drag.moved = true;
+    setProp(c, 'x', Math.round(nx)); setProp(c, 'y', Math.round(ny));
   } else {
-    c.scale = clamp(drag.s0 * (Math.hypot(p.x - drag.cx, p.y - drag.cy) / drag.d0), 0.05, 10);
+    setProp(c, 'scale', clamp(drag.s0 * (Math.hypot(p.x - drag.cx, p.y - drag.cy) / drag.d0), 0.05, 10));
     drag.moved = true;
   }
   touched(); emit('props');
@@ -290,7 +298,7 @@ overlay.addEventListener('wheel', (ev) => {
   const c = getClip(S.selection);
   if (!c || c.type === 'audio') return;
   ev.preventDefault();
-  c.scale = clamp(c.scale * (ev.deltaY < 0 ? 1.04 : 0.96), 0.05, 10);
+  setProp(c, 'scale', clamp(evalProp(c, 'scale', localTime(c)) * (ev.deltaY < 0 ? 1.04 : 0.96), 0.05, 10));
   touched(); emit('props');
   clearTimeout(overlay._wt); overlay._wt = setTimeout(commit, 400);
 }, { passive: false });

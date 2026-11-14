@@ -172,3 +172,19 @@ input[type=color] { width: 34px; height: 26px; padding: 0; border: 1px solid var
 .toast.error { border-left-color: var(--danger); }
 .toast.ok { border-left-color: var(--accent2); }
 .toast.out { opacity: 0; transform: translateX(20px); }
+
+.clip .wave { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 45%; pointer-events: none; opacity: .8; }
+.clip.audio .wave { height: 100%; top: 0; }
+.clip.audio { background-image: none; }
+.clip .kf { position: absolute; bottom: 3px; width: 7px; height: 7px; margin-left: -3px; background: #ffd84d; transform: rotate(45deg); border: 1px solid rgba(0, 0, 0, .6); pointer-events: none; z-index: 2; }
+.kf-row { display: flex; gap: 6px; margin: 6px 0 2px; }
+.kf-row .btn { flex: 1; padding: 4px 6px; font-size: 12px; }
+.kf-row .btn.on { background: #ffd84d; border-color: #ffd84d; color: #201a00; font-weight: 600; }
+.tool-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.tool-grid .btn { padding: 6px 4px; font-size: 12px; white-space: normal; line-height: 1.2; }
+.sticker-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; margin-bottom: 12px; }
+.sticker-grid button { background: #0d0e12; border: 1px solid var(--line); border-radius: 6px; font-size: 20px; padding: 4px 0; cursor: pointer; font-family: "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
+.sticker-grid button:hover { border-color: var(--accent); }
+.rec-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--danger); margin-right: 6px; animation: blink 1s infinite; }
+@keyframes blink { 50% { opacity: .2; } }
+.tp-right { display: flex; align-items: center; gap: 8px; }

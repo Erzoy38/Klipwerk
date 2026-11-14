@@ -1,5 +1,6 @@
 // Compositor: zeichnet ein Bild der Timeline auf eine Canvas (Vorschau und Export nutzen denselben Code)
-import { S, getMedia, getTrack } from './state.js';
+import { S, getMedia, getTrack, evalProp } from './state.js';
+import { chromaKey } from './chroma.js';
 import { animState, fxTransform, filterString, applyPostFx, hasPostFx } from './effects.js';
 
 const scratch = new Map();
@@ -46,9 +47,10 @@ export function baseSize(clip, P) {
   return { w: sw * fit, h: sh * fit };
 }
 
-export function clipBounds(clip, P) {
-  const b = baseSize(clip, P);
-  return { cx: P.width / 2 + clip.x, cy: P.height / 2 + clip.y, w: b.w * clip.scale, h: b.h * clip.scale, rot: clip.rotation };
+export function clipBounds(clip, P, t = S.time) {
+  const b = baseSize(clip, P); const l = Math.min(clip.duration, Math.max(0, t - clip.start));
+  const sc = evalProp(clip, 'scale', l);
+  return { cx: P.width / 2 + evalProp(clip, 'x', l), cy: P.height / 2 + evalProp(clip, 'y', l), w: b.w * sc, h: b.h * sc, rot: evalProp(clip, 'rotation', l) };
 }
 
 function drawText(ctx, clip, P, s, chars) {
@@ -80,6 +82,27 @@ function drawText(ctx, clip, P, s, chars) {
 }
 
 function drawMedia(ctx, clip, src, w, h, s, env) {
+  // Zuschnitt und Maske als Schnittpfad
+  const cr = clip.crop, hasCrop = cr && (cr.l || cr.r || cr.t || cr.b);
+  if (hasCrop || (clip.mask && clip.mask !== 'none')) {
+    const x0 = -w / 2 + w * (cr?.l || 0), y0 = -h / 2 + h * (cr?.t || 0);
+    const cw = Math.max(1, w * (1 - (cr?.l || 0) - (cr?.r || 0))), ch = Math.max(1, h * (1 - (cr?.t || 0) - (cr?.b || 0)));
+    ctx.beginPath();
+    if (clip.mask === 'circle') ctx.ellipse(x0 + cw / 2, y0 + ch / 2, cw / 2, ch / 2, 0, 0, Math.PI * 2);
+    else if (clip.mask === 'round') ctx.roundRect(x0, y0, cw, ch, Math.min(cw, ch) * 0.12);
+    else if (clip.mask === 'square') { const q = Math.min(cw, ch); ctx.rect(x0 + (cw - q) / 2, y0 + (ch - q) / 2, q, q); }
+    else if (clip.mask === 'heart') {
+      const cx = x0 + cw / 2, q = Math.min(cw, ch), top = y0 + (ch - q) / 2;
+      ctx.moveTo(cx, top + q * 0.3);
+      ctx.bezierCurveTo(cx - q * 0.5, top - q * 0.1, cx - q * 0.75, top + q * 0.55, cx, top + q * 0.95);
+      ctx.bezierCurveTo(cx + q * 0.75, top + q * 0.55, cx + q * 0.5, top - q * 0.1, cx, top + q * 0.3);
+    } else ctx.rect(x0, y0, cw, ch);
+    ctx.clip();
+  }
+  if (clip.chroma && clip.chroma.on) {
+    const keyed = chromaKey(src.el, src.w, src.h, clip.chroma);
+    if (keyed) { ctx.drawImage(keyed, -w / 2, -h / 2, w, h); return; }
+  }
   const bg = clip.bg;
   if (bg && bg.remove && env.segmenter) {
     const cut = env.segmenter.cutout(src.el, src.w, src.h, !!bg.invert);
@@ -110,20 +133,23 @@ function drawClip(ctx, clip, P, t, s, env, sc) {
   }
   const an = animState(clip, local, P);
   const ft = fxTransform(clip, t, local);
-  const alpha = clip.opacity * an.alpha;
+  const cl = Math.min(clip.duration, Math.max(0, local));
+  const px = evalProp(clip, 'x', cl), py = evalProp(clip, 'y', cl), pscale = evalProp(clip, 'scale', cl), prot = evalProp(clip, 'rotation', cl);
+  const alpha = Math.min(1, Math.max(0, evalProp(clip, 'opacity', cl))) * an.alpha;
   if (alpha <= 0.001) return;
+  const blend = clip.blend && clip.blend !== 'source-over' ? clip.blend : null;
   const size = baseSize(clip, P);
   const f = clip.filter || {};
   const post = hasPostFx(clip);
   const tint = f.tint && f.tintAmt > 0;
-  const needLayer = post || tint || an.wipe != null || alpha < 0.999;
+  const needLayer = post || tint || an.wipe != null || alpha < 0.999 || !!blend;
   const target = needLayer ? sc.L.getContext('2d') : ctx;
   if (needLayer) { target.setTransform(1, 0, 0, 1, 0, 0); target.globalAlpha = 1; target.filter = 'none'; target.globalCompositeOperation = 'source-over'; target.clearRect(0, 0, sc.L.width, sc.L.height); }
 
   target.save();
-  target.setTransform(s, 0, 0, s, s * (P.width / 2 + clip.x + an.dx + ft.dx), s * (P.height / 2 + clip.y + an.dy + ft.dy));
-  target.rotate(((clip.rotation + an.rot) * Math.PI) / 180);
-  const k = clip.scale * an.scale * ft.scale;
+  target.setTransform(s, 0, 0, s, s * (P.width / 2 + px + an.dx + ft.dx), s * (P.height / 2 + py + an.dy + ft.dy));
+  target.rotate(((prot + an.rot) * Math.PI) / 180);
+  const k = pscale * an.scale * ft.scale;
   target.scale(k * (clip.flip ? -1 : 1), k);
   target.filter = filterString(f, s, an.blur, ft.hue);
   if (clip.type === 'text') drawText(target, clip, P, s, an.chars);
@@ -143,6 +169,7 @@ function drawClip(ctx, clip, P, t, s, env, sc) {
   if (post) applyPostFx(clip, t, sc.L, sc.M, sc.T, s);
 
   ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = alpha;
+  if (blend) ctx.globalCompositeOperation = blend;
   if (an.wipe != null) {
     const W = sc.L.width, H = sc.L.height, ww = W * an.wipe.p;
     ctx.beginPath(); ctx.rect(an.wipe.fromRight ? W - ww : 0, 0, ww, H); ctx.clip();
@@ -178,7 +205,7 @@ export function hitTest(px, py, t) {
     if (tr.kind === 'audio' || tr.hidden) continue;
     const clips = P.clips.filter((c) => c.trackId === tr.id && t >= c.start && t < c.start + c.duration);
     for (const c of clips.reverse()) {
-      const b = clipBounds(c, P);
+      const b = clipBounds(c, P, t);
       const a = (-b.rot * Math.PI) / 180, dx = px - b.cx, dy = py - b.cy;
       const lx = dx * Math.cos(a) - dy * Math.sin(a), ly = dx * Math.sin(a) + dy * Math.cos(a);
       if (Math.abs(lx) <= b.w / 2 && Math.abs(ly) <= b.h / 2) return c;
@@ -199,7 +226,7 @@ export function audioPlan() {
   const duration = P.clips.reduce((mx, c) => Math.max(mx, c.start + c.duration), 0);
   const clips = P.clips.filter(isAudible).map((c) => ({
     path: getMedia(c.mediaId).path, srcStart: c.offset, srcDur: c.duration * c.speed, start: c.start, speed: c.speed,
-    volume: c.volume, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0, enhance: !!c.enhance,
+    volume: c.volume, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0, afx: c.afx && c.afx !== 'none' ? c.afx : null,
   }));
   return { duration, clips };
 }

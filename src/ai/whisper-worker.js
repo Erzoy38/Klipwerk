@@ -35,7 +35,7 @@ self.onmessage = async (e) => {
     if (d.type === 'load') { await load(d.model); self.postMessage({ type: 'loaded', id: d.id }); return; }
     if (d.type === 'run') {
       await load(d.model);
-      const out = await asr(d.audio, { return_timestamps: true, language: d.language, task: 'transcribe', chunk_length_s: 30 });
+      const out = await asr(d.audio, { return_timestamps: true, language: d.language, task: d.task || 'transcribe', chunk_length_s: 30 });
       self.postMessage({ type: 'result', id: d.id, chunks: out.chunks || [], text: out.text || '' });
     }
   } catch (err) {

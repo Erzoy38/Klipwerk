@@ -1,7 +1,7 @@
 {
   "name": "klipwerk",
   "productName": "Klipwerk",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Kostenloser Video-Editor mit lokalen KI-Funktionen",
   "main": "main.js",
   "author": "Erzoy38",

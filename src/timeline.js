@@ -1,8 +1,9 @@
 // Timeline: Spuren, Clips verschieben/trimmen/teilen, Einrasten, Lineal, Abspielkopf
 import {
   S, on, emit, uid, clamp, getClip, getMedia, getTrack, trackClips, clipEnd, kindOfClip, maxDuration, freeStart, projectDuration,
-  select, commit, changed, makeMediaClip, makeTextClip, fmtTime, toast,
+  select, commit, changed, makeMediaClip, makeTextClip, fmtTime, toast, kfTimes, shiftKeyframes,
 } from './state.js';
+import { getPeaks, drawWave } from './waveform.js';
 import { seek, pause, player } from './player.js';
 
 const scroll = document.getElementById('tlScroll');
@@ -58,7 +59,18 @@ function clipEl(c) {
   const tag = (t) => { const s = document.createElement('span'); s.textContent = t; tags.appendChild(s); };
   if (c.speed && c.speed !== 1) tag(`${c.speed}x`);
   if (c.bg?.remove) tag('Freigestellt');
-  if (c.enhance) tag('Audio+');
+  if (c.afx && c.afx !== 'none') tag(c.afx === 'enhance' ? 'Audio+' : 'Stimme');
+  if (c.chroma?.on) tag('Greenscreen');
+  if (m?.hasAudio && (c.type === 'audio' || c.type === 'video') && !c.muted) {
+    const cv = document.createElement('canvas'); cv.className = 'wave';
+    cv.width = Math.round(Math.min(2400, Math.max(8, c.duration * S.pps))); cv.height = 36;
+    el.appendChild(cv);
+    getPeaks(m.path).then((pk) => { if (cv.isConnected) drawWave(cv, pk, c.offset, c.duration * c.speed); });
+  }
+  for (const t of kfTimes(c)) {
+    if (t < 0 || t > c.duration) continue;
+    const k = document.createElement('i'); k.className = 'kf'; k.style.left = `${t * S.pps}px`; el.appendChild(k);
+  }
   if (c.fx && Object.keys(c.fx).length) tag('FX');
   if (c.filter && c.filter.preset !== 'none') tag('Filter');
   const hl = document.createElement('div'); hl.className = 'h l';
@@ -123,6 +135,7 @@ export function splitAtPlayhead() {
     const end = clipEnd(c);
     c.duration = t - c.start;
     b.start = t; b.duration = end - t; b.offset = c.offset + (t - c.start) * c.speed;
+    shiftKeyframes(b, t - c.start);
     if (c.animOut) c.animOut = { ...c.animOut, type: 'none' };
     if (b.animIn) b.animIn = { ...b.animIn, type: 'none' };
     if ('fadeOut' in c) c.fadeOut = 0;
@@ -136,6 +149,23 @@ export function deleteSelected() {
   const c = getClip(S.selection); if (!c) return;
   S.project.clips = S.project.clips.filter((x) => x.id !== c.id);
   S.selection = null; commit(); changed(); emit('selection');
+}
+export function rippleDelete() {
+  const c = getClip(S.selection); if (!c) return;
+  const end = clipEnd(c);
+  S.project.clips = S.project.clips.filter((x) => x.id !== c.id);
+  for (const x of S.project.clips) if (x.trackId === c.trackId && x.start >= end - 1e-6) x.start = Math.max(0, x.start - c.duration);
+  S.selection = null; commit(); changed(); emit('selection');
+}
+let clipboard = null;
+export function copySelected() { const c = getClip(S.selection); if (c) { clipboard = JSON.stringify(c); toast('Clip kopiert.'); } }
+export function pasteClip() {
+  if (!clipboard) return;
+  const b = JSON.parse(clipboard); b.id = uid('c');
+  if (!getTrack(b.trackId)) { const t = S.project.tracks.find((x) => x.kind === kindOfClip(b)); if (!t) return; b.trackId = t.id; }
+  if (b.mediaId && !getMedia(b.mediaId)) return;
+  b.start = freeStart(b.trackId, S.time, b.duration);
+  S.project.clips.push(b); S.selection = b.id; commit(); changed(); emit('selection');
 }
 export function duplicateSelected() {
   const c = getClip(S.selection); if (!c) return;
@@ -213,6 +243,7 @@ rows.addEventListener('pointerdown', (ev) => {
   const sibs = trackClips(c.trackId).filter((x) => x.id !== c.id);
   drag = {
     mode, clip: c, x0: ev.clientX, start0: c.start, dur0: c.duration, off0: c.offset, track0: c.trackId, moved: false,
+    kf0: c.kf ? JSON.stringify(c.kf) : null,
     prevEnd: sibs.filter((x) => clipEnd(x) <= c.start + 1e-6).reduce((m, x) => Math.max(m, clipEnd(x)), 0),
     nextStart: sibs.filter((x) => x.start >= clipEnd(c) - 1e-6).reduce((m, x) => Math.min(m, x.start), Infinity),
   };
@@ -241,6 +272,7 @@ rows.addEventListener('pointermove', (ev) => {
     ns = clamp(ns, minStart, end - 0.1);
     c.start = ns; c.duration = end - ns;
     if (isMedia) c.offset = Math.max(0, drag.off0 + (ns - drag.start0) * c.speed);
+    if (drag.kf0) { c.kf = JSON.parse(drag.kf0); shiftKeyframes(c, ns - drag.start0); }
   } else {
     let ne = drag.start0 + drag.dur0 + dt;
     const s = snapTime(ne, c.id); if (s.hit) { ne = s.t; showSnap(s.t); } else showSnap(null);
